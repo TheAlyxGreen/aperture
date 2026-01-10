@@ -1,0 +1,11 @@
+{
+  "bskyServer": "https://bsky.social",
+  "jetstreamServer": "",
+  "regexes": [
+  ],
+  "urlRegexes": [
+    "youtube\\.com",
+    "youtu\\.be"
+  ],
+  "port": 8080
+}

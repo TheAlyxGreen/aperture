@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Aperture Client</title>
+    <style>
+        body { font-family: monospace; background: #222; color: #eee; padding: 20px; }
+        #messages { list-style-type: none; padding: 0; }
+        #messages li { padding: 10px; border-bottom: 1px solid #444; display: flex; flex-direction: column; }
+        .meta { font-size: 0.8em; color: #888; margin-bottom: 4px; }
+        .content { font-size: 1.1em; white-space: pre-wrap; }
+        .embed { margin-top: 8px; padding: 8px; background: #333; border-radius: 4px; font-size: 0.9em; }
+        .embed-type { font-weight: bold; color: #aaa; margin-bottom: 4px; }
+        .embed-link a { color: #4af; text-decoration: none; }
+        .embed-link a:hover { text-decoration: underline; }
+        #status { color: #888; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Aperture Feed</h1>
+    <div id="status">Connecting...</div>
+    <ul id="messages"></ul>
+
+    <script>
+        const ws = new WebSocket("ws://localhost:8080/ws");
+        const list = document.getElementById("messages");
+        const status = document.getElementById("status");
+
+        const EmbedType = {
+            1: "Images",
+            2: "External Link",
+            3: "Quote Post",
+            4: "Video"
+        };
+
+        ws.onopen = function() {
+            status.textContent = "Connected";
+            status.style.color = "#4f4";
+        };
+
+        ws.onmessage = function(evt) {
+            const li = document.createElement("li");
+
+            try {
+                const data = JSON.parse(evt.data);
+
+                // Meta info
+                const meta = document.createElement("div");
+                meta.className = "meta";
+                meta.textContent = new Date().toLocaleTimeString();
+
+                // Content
+                const content = document.createElement("div");
+                content.className = "content";
+
+                if (data.post && data.post.text) {
+                    content.textContent = data.post.text;
+                } else {
+                    content.textContent = "[No Text]";
+                    content.style.color = "#888";
+                    content.style.fontStyle = "italic";
+                }
+
+                li.appendChild(meta);
+                li.appendChild(content);
+
+                // Embeds
+                if (data.post && data.post.embed) {
+                    const embedDiv = document.createElement("div");
+                    embedDiv.className = "embed";
+
+                    const typeStr = EmbedType[data.post.embed.type] || "Unknown Embed";
+                    const typeHeader = document.createElement("div");
+                    typeHeader.className = "embed-type";
+                    typeHeader.textContent = `[${typeStr}]`;
+                    embedDiv.appendChild(typeHeader);
+
+                    // Handle External Link
+                    if (data.post.embed.type === 2 && data.post.embed.external) {
+                        const linkDiv = document.createElement("div");
+                        linkDiv.className = "embed-link";
+                        const a = document.createElement("a");
+                        a.href = data.post.embed.external.url;
+                        a.target = "_blank";
+                        a.textContent = data.post.embed.external.title || data.post.embed.external.url;
+                        linkDiv.appendChild(a);
+
+                        if (data.post.embed.external.description) {
+                            const desc = document.createElement("div");
+                            desc.style.fontSize = "0.8em";
+                            desc.style.color = "#ccc";
+                            desc.textContent = data.post.embed.external.description;
+                            linkDiv.appendChild(desc);
+                        }
+                        embedDiv.appendChild(linkDiv);
+                    }
+
+                    // Handle Images
+                    if (data.post.embed.type === 1 && data.post.embed.images) {
+                        const imgInfo = document.createElement("div");
+                        imgInfo.textContent = `${data.post.embed.images.length} image(s)`;
+                        embedDiv.appendChild(imgInfo);
+                    }
+
+                    // Handle Video
+                    if (data.post.embed.type === 4 && data.post.embed.video) {
+                         const vidInfo = document.createElement("div");
+                         vidInfo.textContent = "Video attached";
+                         embedDiv.appendChild(vidInfo);
+                    }
+
+                    li.appendChild(embedDiv);
+                }
+
+            } catch (e) {
+                console.error(e);
+                li.textContent = evt.data;
+            }
+
+            list.prepend(li); // Newest at top
+
+            // Keep list size manageable
+            if (list.children.length > 100) {
+                list.removeChild(list.lastChild);
+            }
+        };
+
+        ws.onclose = function() {
+            status.textContent = "Disconnected";
+            status.style.color = "#f44";
+        };
+    </script>
+</body>
+</html>
