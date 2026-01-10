@@ -22,7 +22,7 @@ Create a `config.json` file in the root directory. You can use the provided exam
 ```json
 {
   "bskyServer": "https://bsky.social",
-  "jetstreamServer": "wss://bsky.network",
+  "jetstreamServer": "",
   "regexes": [
     "\\.com",
     "important topic"
@@ -36,7 +36,11 @@ Create a `config.json` file in the root directory. You can use the provided exam
 ```
 
 *   `bskyServer`: The Bluesky API endpoint.
-*   `jetstreamServer`: The Jetstream firehose WebSocket endpoint (e.g., `wss://bsky.network`).
+*   `jetstreamServer`: The Jetstream firehose WebSocket endpoint. Leave empty to let Firefly pick a random server, or specify one of the following:
+    *   `wss://jetstream1.us-east.bsky.network/subscribe`
+    *   `wss://jetstream2.us-east.bsky.network/subscribe`
+    *   `wss://jetstream1.us-west.bsky.network/subscribe`
+    *   `wss://jetstream2.us-west.bsky.network/subscribe`
 *   `regexes`: A list of regex patterns to match against the post text.
 *   `urlRegexes`: A list of regex patterns to match against embedded external URLs.
 *   `port`: The port for the HTTP and WebSocket server.
