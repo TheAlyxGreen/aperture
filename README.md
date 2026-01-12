@@ -45,6 +45,7 @@ Create a `config.json` file in the root directory.
     },
     {
       "name": "Specific User",
+      "collections": ["app.bsky.feed.post", "app.bsky.feed.repost"],
       "authors": ["did:plc:12345", "alice.bsky.social"]
     }
   ],
@@ -64,7 +65,7 @@ Create a `config.json` file in the root directory.
 A RuleSet matches an event if **ALL** specified criteria in the set are met.
 
 *   `name`: A friendly name for the rule (displayed in the client).
-*   `collections`: List of event collections to listen for (e.g., `app.bsky.feed.post`, `app.bsky.feed.like`). If omitted, defaults to all subscribed collections (but regexes might fail on non-posts).
+*   `collections`: List of event collections to listen for (e.g., `app.bsky.feed.post`, `app.bsky.feed.like`). **Important:** You must specify collections here to ensure the application subscribes to them. If omitted, the rule will only match events that *other* rules have caused the app to subscribe to.
 *   `textRegexes`: List of regex patterns to match against post text. (Only applies to Posts).
 *   `urlRegexes`: List of regex patterns to match against embedded external URLs. (Only applies to Posts).
 *   `authors`: List of exact DIDs (e.g., `did:plc:...`) or Handles (e.g., `user.bsky.social`) to match. *Note: Handle matching depends on the event containing the handle, which is not guaranteed for all events.*

@@ -3,17 +3,18 @@
   "jetstreamServer": "",
   "rules": [
     {
-      "name": "Posts with DotCom Sites",
+      "name": "DotCom Sites",
       "collections": ["app.bsky.feed.post"],
       "textRegexes": ["\\.com", "\\.org"]
     },
     {
-      "name": "Posts with YouTube Links",
+      "name": "YouTube Links",
       "collections": ["app.bsky.feed.post"],
       "urlRegexes": ["youtube\\.com", "youtu\\.be"]
     },
     {
-      "name": "By @The.Alyx.Green",
+      "name": "Specific User",
+      "collections": ["app.bsky.feed.post", "app.bsky.feed.repost"],
       "authors": ["did:plc:zc2czfpad5tdvoiexkilqmug"]
     }
   ],
