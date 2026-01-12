@@ -10,7 +10,10 @@ type RuleSet struct {
 	Collections []string `json:"collections"`
 	TextRegexes []string `json:"textRegexes"`
 	UrlRegexes  []string `json:"urlRegexes"`
-	Authors     []string `json:"authors"` // Exact DID match
+	Authors     []string `json:"authors"`
+	EmbedTypes  []string `json:"embedTypes"`
+	Langs       []string `json:"langs"`
+	IsReply     *bool    `json:"isReply,omitempty"` // true: must be reply, false: must not be reply, nil: ignore
 }
 
 type Config struct {

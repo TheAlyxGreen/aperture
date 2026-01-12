@@ -10,10 +10,13 @@ Aperture is a high-performance, real-time filter for the Bluesky firehose. It co
     *   **AND Logic**: Within a RuleSet, all criteria must match.
     *   **OR Logic**: If any RuleSet matches, the event is broadcast.
 *   **Filtering Options**:
-    *   **Collections**: Filter by event type (e.g., `app.bsky.feed.post`, `app.bsky.feed.like`).
+    *   **Collections**: Filter by event type (e.g., `app.bsky.feed.post`, `app.bsky.feed.like`). Use `*` to subscribe to all collections.
     *   **Text Content**: Regex matching on post text.
     *   **Embedded URLs**: Regex matching on external links embedded in posts.
     *   **Authors**: Exact matching on DIDs or Handles (if available).
+    *   **Embed Types**: Filter by type of content embedded (images, video, external link, quote post).
+    *   **Languages**: Filter by post language (e.g., en, ja).
+    *   **Reply Status**: Filter by whether the post is a reply or an original post.
 *   **WebSocket Feed**: Consumes filtered events via a WebSocket connection.
 *   **Web Client**: Includes a rich HTML client with client-side rule filtering.
 
@@ -36,7 +39,9 @@ Create a `config.json` file in the root directory.
     {
       "name": "Tech News",
       "collections": ["app.bsky.feed.post"],
-      "textRegexes": ["golang", "rustlang", "AI"]
+      "textRegexes": ["golang", "rustlang", "AI"],
+      "langs": ["en"],
+      "isReply": false
     },
     {
       "name": "YouTube Links",
@@ -47,6 +52,15 @@ Create a `config.json` file in the root directory.
       "name": "Specific User",
       "collections": ["app.bsky.feed.post", "app.bsky.feed.repost"],
       "authors": ["did:plc:12345", "alice.bsky.social"]
+    },
+    {
+      "name": "Art Feed",
+      "collections": ["app.bsky.feed.post"],
+      "embedTypes": ["images"]
+    },
+    {
+      "name": "Everything",
+      "collections": ["*"]
     }
   ],
   "port": 8080
@@ -65,10 +79,13 @@ Create a `config.json` file in the root directory.
 A RuleSet matches an event if **ALL** specified criteria in the set are met.
 
 *   `name`: A friendly name for the rule (displayed in the client).
-*   `collections`: List of event collections to listen for (e.g., `app.bsky.feed.post`, `app.bsky.feed.like`). **Important:** You must specify collections here to ensure the application subscribes to them. If omitted, the rule will only match events that *other* rules have caused the app to subscribe to.
+*   `collections`: List of event collections to listen for (e.g., `app.bsky.feed.post`, `app.bsky.feed.like`). Use `*` to subscribe to ALL collections. **Important:** You must specify collections here to ensure the application subscribes to them. If omitted, the rule will only match events that *other* rules have caused the app to subscribe to.
 *   `textRegexes`: List of regex patterns to match against post text. (Only applies to Posts).
 *   `urlRegexes`: List of regex patterns to match against embedded external URLs. (Only applies to Posts).
-*   `authors`: List of exact DIDs (e.g., `did:plc:...`) or Handles (e.g., `user.bsky.social`) to match. *Note: Handle matching depends on the event containing the handle, which is not guaranteed for all events.*
+*   `authors`: List of exact DIDs (e.g., `did:plc:...`) or Handles (e.g., `user.bsky.social`) to match.
+*   `embedTypes`: List of embed types to match. Values: `images`, `video`, `external`, `record` (quote post). (Only applies to Posts).
+*   `langs`: List of language codes to match (e.g., `en`, `ja`). Matches if the post contains ANY of the specified languages. (Only applies to Posts).
+*   `isReply`: Boolean. `true` matches only replies. `false` matches only original posts (and quote posts). If omitted, matches both. (Only applies to Posts).
 
 ## Usage
 

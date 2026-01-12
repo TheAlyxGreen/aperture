@@ -33,6 +33,7 @@ func main() {
 	var compiledRules []CompiledRuleSet
 	collectionsMap := make(map[string]bool)
 	var ruleNames []string
+	subscribeToAll := false
 
 	for i, rule := range config.Rules {
 		var cr CompiledRuleSet
@@ -45,6 +46,9 @@ func main() {
 		// Collections
 		cr.Collections = rule.Collections
 		for _, c := range rule.Collections {
+			if c == "*" {
+				subscribeToAll = true
+			}
 			collectionsMap[c] = true
 		}
 
@@ -74,19 +78,29 @@ func main() {
 			}
 		}
 
+		// Embed Types & Langs & IsReply
+		cr.EmbedTypes = rule.EmbedTypes
+		cr.Langs = rule.Langs
+		cr.IsReply = rule.IsReply
+
 		compiledRules = append(compiledRules, cr)
 	}
 	log.Printf("Loaded %d rule sets", len(compiledRules))
 
 	var collections []string
-	for c := range collectionsMap {
-		collections = append(collections, c)
+	if !subscribeToAll {
+		for c := range collectionsMap {
+			collections = append(collections, c)
+		}
+		if len(collections) == 0 {
+			// Default to posts if nothing specified, to avoid empty stream
+			collections = []string{"app.bsky.feed.post"}
+		}
+		log.Printf("Subscribing to collections: %v", collections)
+	} else {
+		log.Printf("Subscribing to ALL collections (*)")
+		collections = nil // Firefly/Jetstream convention for "all"
 	}
-	if len(collections) == 0 {
-		// Default to posts if nothing specified, to avoid empty stream
-		collections = []string{"app.bsky.feed.post"}
-	}
-	log.Printf("Subscribing to collections: %v", collections)
 
 	// 3. Start the Hub
 	hub := NewHub()

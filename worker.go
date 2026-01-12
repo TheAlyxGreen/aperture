@@ -14,7 +14,10 @@ type CompiledRuleSet struct {
 	Collections  []string
 	TextPatterns []*regexp.Regexp
 	UrlPatterns  []*regexp.Regexp
-	Authors      map[string]bool // Set of DIDs for exact match
+	Authors      map[string]bool
+	EmbedTypes   []string
+	Langs        []string
+	IsReply      *bool
 }
 
 type BroadcastMessage struct {
@@ -78,15 +81,26 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 		for _, rule := range rules {
 			// 1. Check Collection
 			if len(rule.Collections) > 0 {
-				collectionMatch := false
+				// Check for wildcard
+				wildcard := false
 				for _, c := range rule.Collections {
-					if c == collection {
-						collectionMatch = true
+					if c == "*" {
+						wildcard = true
 						break
 					}
 				}
-				if !collectionMatch {
-					continue
+
+				if !wildcard {
+					collectionMatch := false
+					for _, c := range rule.Collections {
+						if c == collection {
+							collectionMatch = true
+							break
+						}
+					}
+					if !collectionMatch {
+						continue
+					}
 				}
 			}
 
@@ -132,6 +146,73 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 					}
 				}
 				if !urlConditionMet {
+					continue
+				}
+			}
+
+			// 5. Check Embed Types (if any)
+			if len(rule.EmbedTypes) > 0 {
+				if event.Post == nil {
+					continue
+				}
+
+				embedMatch := false
+				var currentType string
+				if event.Post.Embed != nil {
+					switch event.Post.Embed.Type {
+					case firefly.EmbedTypeImages:
+						currentType = "images"
+					case firefly.EmbedTypeVideo:
+						currentType = "video"
+					case firefly.EmbedTypeExternal:
+						currentType = "external"
+					case firefly.EmbedTypeRecord:
+						currentType = "record"
+					}
+				}
+
+				for _, t := range rule.EmbedTypes {
+					if t == currentType {
+						embedMatch = true
+						break
+					}
+				}
+				if !embedMatch {
+					continue
+				}
+			}
+
+			// 6. Check Languages (if any)
+			if len(rule.Langs) > 0 {
+				if event.Post == nil {
+					continue
+				}
+
+				langMatch := false
+				for _, postLang := range event.Post.Languages {
+					for _, ruleLang := range rule.Langs {
+						if postLang == ruleLang {
+							langMatch = true
+							break
+						}
+					}
+					if langMatch {
+						break
+					}
+				}
+				if !langMatch {
+					continue
+				}
+			}
+
+			// 7. Check IsReply
+			if rule.IsReply != nil {
+				if event.Post == nil {
+					continue
+				}
+
+				isReply := event.Post.ReplyInfo != nil
+				if *rule.IsReply != isReply {
 					continue
 				}
 			}

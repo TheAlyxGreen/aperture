@@ -16,6 +16,16 @@
       "name": "Specific User",
       "collections": ["app.bsky.feed.post", "app.bsky.feed.repost"],
       "authors": ["did:plc:zc2czfpad5tdvoiexkilqmug"]
+    },
+    {
+      "name": "Original Art",
+      "collections": ["app.bsky.feed.post"],
+      "embedTypes": ["images"],
+      "isReply": false
+    },
+    {
+      "name": "Everything",
+      "collections": ["*"]
     }
   ],
   "port": 8080
