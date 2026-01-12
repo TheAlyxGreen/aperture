@@ -1,11 +1,21 @@
 {
   "bskyServer": "https://bsky.social",
   "jetstreamServer": "",
-  "regexes": [
-  ],
-  "urlRegexes": [
-    "youtube\\.com",
-    "youtu\\.be"
+  "rules": [
+    {
+      "name": "Posts with DotCom Sites",
+      "collections": ["app.bsky.feed.post"],
+      "textRegexes": ["\\.com", "\\.org"]
+    },
+    {
+      "name": "Posts with YouTube Links",
+      "collections": ["app.bsky.feed.post"],
+      "urlRegexes": ["youtube\\.com", "youtu\\.be"]
+    },
+    {
+      "name": "By @The.Alyx.Green",
+      "authors": ["did:plc:zc2czfpad5tdvoiexkilqmug"]
+    }
   ],
   "port": 8080
 }

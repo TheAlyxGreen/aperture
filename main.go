@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"runtime"
 	"time"
-	
+
 	"github.com/TheAlyxGreen/firefly"
 	"github.com/gorilla/websocket"
 )
@@ -27,52 +28,89 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
-	
-	// 2. Compile Text Regexes
-	var textRegexes []*regexp.Regexp
-	for _, r := range config.Regexes {
-		compiled, err := regexp.Compile(r)
-		if err != nil {
-			log.Fatalf("Invalid text regex '%s': %v", r, err)
-		}
-		textRegexes = append(textRegexes, compiled)
-	}
-	log.Printf("Loaded %d text regexes", len(textRegexes))
 
-	// 3. Compile URL Regexes
-	var urlRegexes []*regexp.Regexp
-	for _, r := range config.UrlRegexes {
-		compiled, err := regexp.Compile(r)
-		if err != nil {
-			log.Fatalf("Invalid url regex '%s': %v", r, err)
+	// 2. Compile Rules and Aggregate Collections
+	var compiledRules []CompiledRuleSet
+	collectionsMap := make(map[string]bool)
+	var ruleNames []string
+
+	for i, rule := range config.Rules {
+		var cr CompiledRuleSet
+		cr.Name = rule.Name
+		if cr.Name == "" {
+			cr.Name = fmt.Sprintf("Rule #%d", i+1)
 		}
-		urlRegexes = append(urlRegexes, compiled)
+		ruleNames = append(ruleNames, cr.Name)
+
+		// Collections
+		cr.Collections = rule.Collections
+		for _, c := range rule.Collections {
+			collectionsMap[c] = true
+		}
+
+		// Compile Text Regexes
+		for _, r := range rule.TextRegexes {
+			compiled, err := regexp.Compile(r)
+			if err != nil {
+				log.Fatalf("Invalid text regex '%s' in rule '%s': %v", r, cr.Name, err)
+			}
+			cr.TextPatterns = append(cr.TextPatterns, compiled)
+		}
+
+		// Compile URL Regexes
+		for _, r := range rule.UrlRegexes {
+			compiled, err := regexp.Compile(r)
+			if err != nil {
+				log.Fatalf("Invalid url regex '%s' in rule '%s': %v", r, cr.Name, err)
+			}
+			cr.UrlPatterns = append(cr.UrlPatterns, compiled)
+		}
+
+		// Authors (Exact Match)
+		if len(rule.Authors) > 0 {
+			cr.Authors = make(map[string]bool)
+			for _, author := range rule.Authors {
+				cr.Authors[author] = true
+			}
+		}
+
+		compiledRules = append(compiledRules, cr)
 	}
-	log.Printf("Loaded %d url regexes", len(urlRegexes))
-	
-	// 4. Start the Hub
+	log.Printf("Loaded %d rule sets", len(compiledRules))
+
+	var collections []string
+	for c := range collectionsMap {
+		collections = append(collections, c)
+	}
+	if len(collections) == 0 {
+		// Default to posts if nothing specified, to avoid empty stream
+		collections = []string{"app.bsky.feed.post"}
+	}
+	log.Printf("Subscribing to collections: %v", collections)
+
+	// 3. Start the Hub
 	hub := NewHub()
 	go hub.Run()
-	
-	// 5. Setup Worker Pool
+
+	// 4. Setup Worker Pool
 	// We need a channel to buffer incoming posts from Firefly
 	jobQueue := make(chan *firefly.FirehoseEvent, 1000) // Buffer size 1000
-	
+
 	// Start workers
-	go StartDispatcher(runtime.NumCPU(), jobQueue, hub.broadcast, textRegexes, urlRegexes)
-	
-	// 6. Start Firefly Consumer
+	go StartDispatcher(runtime.NumCPU(), jobQueue, hub.broadcast, compiledRules)
+
+	// 5. Start Firefly Consumer
 	go func() {
 		log.Println("Connecting to Bluesky...")
 		ctx := context.Background()
-		
+
 		// Create client
 		client, err := firefly.NewCustomInstance(ctx, config.BskyServer, new(http.Client))
 		if err != nil {
 			log.Printf("Error creating firefly client: %v", err)
 			return
 		}
-		
+
 		// Determine Firehose URL
 		var jetstreamURL *string
 		log.Printf("StreamEvents starting...")
@@ -82,9 +120,9 @@ func main() {
 		} else {
 			log.Printf("URL: <default>")
 		}
-		
+
 		events, err := client.StreamEvents(ctx, &firefly.FirehoseOptions{
-			Collections: []string{"app.bsky.feed.post"},
+			Collections: collections,
 			BufferSize:  1000,
 			URL:         jetstreamURL,
 		})
@@ -92,10 +130,10 @@ func main() {
 			log.Printf("Error starting firehose: %v", err)
 			return
 		}
-		
+
 		count := 0
 		lastLog := time.Now()
-		
+
 		for event := range events {
 			count++
 			if time.Since(lastLog) > 30*time.Second {
@@ -103,22 +141,27 @@ func main() {
 				count = 0
 				lastLog = time.Now()
 			}
-			
-			if event.Type == firefly.EventTypePost {
-				jobQueue <- event
-			}
+
+			// We now pass ALL events to the worker, not just posts
+			// The worker will filter based on collection
+			jobQueue <- event
 		}
 	}()
-	
-	// 7. Start HTTP Server
+
+	// 6. Start HTTP Server
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "client.html")
 	})
-	
+
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		serveWs(hub, w, r)
 	})
-	
+
+	http.HandleFunc("/rules", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(ruleNames)
+	})
+
 	addr := fmt.Sprintf(":%d", config.Port)
 	log.Printf("Server starting on %s", addr)
 	err = http.ListenAndServe(addr, nil)

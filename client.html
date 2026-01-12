@@ -4,34 +4,122 @@
     <meta charset="UTF-8">
     <title>Aperture Client</title>
     <style>
-        body { font-family: monospace; background: #222; color: #eee; padding: 20px; }
+        body { font-family: monospace; background: #222; color: #eee; padding: 20px; display: flex; gap: 20px; }
+        #sidebar { width: 250px; flex-shrink: 0; }
+        #main { flex-grow: 1; }
+
         #messages { list-style-type: none; padding: 0; }
         #messages li { padding: 10px; border-bottom: 1px solid #444; display: flex; flex-direction: column; }
-        .meta { font-size: 0.8em; color: #888; margin-bottom: 4px; }
-        .content { font-size: 1.1em; white-space: pre-wrap; }
+        .meta { font-size: 0.8em; color: #888; margin-bottom: 4px; display: flex; justify-content: space-between; }
+        .author { color: #4af; font-weight: bold; margin-right: 10px; }
+        .rules { color: #f88; font-weight: bold; }
+        .content { font-size: 1.1em; white-space: pre-wrap; margin-top: 5px; }
         .embed { margin-top: 8px; padding: 8px; background: #333; border-radius: 4px; font-size: 0.9em; }
         .embed-type { font-weight: bold; color: #aaa; margin-bottom: 4px; }
         .embed-link a { color: #4af; text-decoration: none; }
         .embed-link a:hover { text-decoration: underline; }
+        .action { font-weight: bold; color: #aaa; }
         #status { color: #888; margin-bottom: 10px; }
+
+        .rule-filter { margin-bottom: 5px; display: block; cursor: pointer; }
+        .rule-filter input { margin-right: 8px; }
+        h2 { font-size: 1.2em; margin-top: 0; }
     </style>
 </head>
 <body>
-    <h1>Aperture Feed</h1>
-    <div id="status">Connecting...</div>
-    <ul id="messages"></ul>
+    <div id="sidebar">
+        <h2>Filters</h2>
+        <div id="rule-list">Loading rules...</div>
+    </div>
+
+    <div id="main">
+        <h1>Aperture Feed</h1>
+        <div id="status">Connecting...</div>
+        <ul id="messages"></ul>
+    </div>
 
     <script>
         const ws = new WebSocket("ws://localhost:8080/ws");
         const list = document.getElementById("messages");
         const status = document.getElementById("status");
+        const ruleList = document.getElementById("rule-list");
 
-        const EmbedType = {
-            1: "Images",
-            2: "External Link",
-            3: "Quote Post",
-            4: "Video"
-        };
+        let activeRules = new Set();
+        let allRules = [];
+        let rulesLoaded = false;
+
+        // Fetch rules
+        fetch('/rules')
+            .then(response => response.json())
+            .then(rules => {
+                console.log("Rules loaded:", rules);
+                allRules = rules || [];
+                renderRuleFilters();
+                rulesLoaded = true;
+            })
+            .catch(err => {
+                ruleList.textContent = "Error loading rules: " + err;
+                console.error("Error loading rules:", err);
+                rulesLoaded = false;
+            });
+
+        function renderRuleFilters() {
+            ruleList.innerHTML = "";
+
+            if (allRules.length === 0) {
+                ruleList.textContent = "No rules configured.";
+                return;
+            }
+
+            // "All" toggle
+            const allLabel = document.createElement("label");
+            allLabel.className = "rule-filter";
+            const allCheck = document.createElement("input");
+            allCheck.type = "checkbox";
+            allCheck.checked = true;
+            allCheck.onchange = (e) => toggleAll(e.target.checked);
+            allLabel.appendChild(allCheck);
+            allLabel.appendChild(document.createTextNode("Select All"));
+            ruleList.appendChild(allLabel);
+
+            ruleList.appendChild(document.createElement("hr"));
+
+            allRules.forEach(rule => {
+                activeRules.add(rule); // Default all active
+
+                const label = document.createElement("label");
+                label.className = "rule-filter";
+
+                const check = document.createElement("input");
+                check.type = "checkbox";
+                check.checked = true;
+                check.value = rule;
+                check.onchange = (e) => toggleRule(rule, e.target.checked);
+
+                label.appendChild(check);
+                label.appendChild(document.createTextNode(rule));
+                ruleList.appendChild(label);
+            });
+        }
+
+        function toggleAll(checked) {
+            const checkboxes = ruleList.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach(cb => cb.checked = checked);
+
+            if (checked) {
+                allRules.forEach(r => activeRules.add(r));
+            } else {
+                activeRules.clear();
+            }
+        }
+
+        function toggleRule(rule, checked) {
+            if (checked) {
+                activeRules.add(rule);
+            } else {
+                activeRules.delete(rule);
+            }
+        }
 
         ws.onopen = function() {
             status.textContent = "Connected";
@@ -39,85 +127,139 @@
         };
 
         ws.onmessage = function(evt) {
-            const li = document.createElement("li");
+            let li = document.createElement("li");
 
             try {
-                const data = JSON.parse(evt.data);
+                const msg = JSON.parse(evt.data);
+                const event = msg.event;
+                const rules = msg.matchedRules || [];
+                const handle = msg.authorHandle;
+
+                console.log("Received:", rules, event);
+
+                // Client-side filtering
+                if (rulesLoaded && allRules.length > 0) {
+                    const isVisible = rules.some(r => activeRules.has(r));
+                    if (!isVisible) {
+                        console.log("Filtered out. Active rules:", Array.from(activeRules));
+                        return;
+                    }
+                }
+
+                // Try to locate the record.
+                let record = null;
+                if (event.commit && event.commit.record) {
+                    record = event.commit.record;
+                } else if (event.record) {
+                    record = event.record;
+                } else if (event.post) {
+                    record = event.post;
+                }
+
+                // Determine Author Display
+                let authorDisplay = handle || event.did || event.repo || "Unknown";
 
                 // Meta info
                 const meta = document.createElement("div");
                 meta.className = "meta";
-                meta.textContent = new Date().toLocaleTimeString();
+
+                const leftMeta = document.createElement("div");
+
+                const authorSpan = document.createElement("span");
+                authorSpan.className = "author";
+                authorSpan.textContent = "@" + authorDisplay;
+                leftMeta.appendChild(authorSpan);
+
+                const timeSpan = document.createElement("span");
+                timeSpan.textContent = new Date().toLocaleTimeString();
+                leftMeta.appendChild(timeSpan);
+
+                meta.appendChild(leftMeta);
+
+                if (rules.length > 0) {
+                    const ruleSpan = document.createElement("span");
+                    ruleSpan.className = "rules";
+                    ruleSpan.textContent = "[" + rules.join(", ") + "]";
+                    meta.appendChild(ruleSpan);
+                }
+
+                li.appendChild(meta);
 
                 // Content
                 const content = document.createElement("div");
                 content.className = "content";
 
-                if (data.post && data.post.text) {
-                    content.textContent = data.post.text;
-                } else {
-                    content.textContent = "[No Text]";
-                    content.style.color = "#888";
-                    content.style.fontStyle = "italic";
-                }
+                if (record) {
+                    const type = record["$type"] || "unknown";
 
-                li.appendChild(meta);
+                    if (type === "app.bsky.feed.post" || record.text) {
+                        content.textContent = record.text || "[No Text]";
+                    } else if (type === "app.bsky.feed.like") {
+                        content.innerHTML = `<span class="action">❤️ Liked</span> <a href="${record.subject.uri}" target="_blank" style="color:#888">${record.subject.uri}</a>`;
+                    } else if (type === "app.bsky.feed.repost") {
+                        content.innerHTML = `<span class="action">🔄 Reposted</span> <a href="${record.subject.uri}" target="_blank" style="color:#888">${record.subject.uri}</a>`;
+                    } else if (type === "app.bsky.graph.follow") {
+                        content.innerHTML = `<span class="action">👤 Followed</span> ${record.subject}`;
+                    } else {
+                        // Fallback for other types
+                        content.textContent = `[${type}] ` + JSON.stringify(record, null, 2);
+                        content.style.color = "#888";
+                        content.style.fontSize = "0.8em";
+                    }
+                } else {
+                    content.textContent = JSON.stringify(event, null, 2);
+                    content.style.color = "#888";
+                    content.style.fontSize = "0.8em";
+                }
                 li.appendChild(content);
 
-                // Embeds
-                if (data.post && data.post.embed) {
+                // Embeds (only for posts usually)
+                if (record && record.embed) {
                     const embedDiv = document.createElement("div");
                     embedDiv.className = "embed";
 
-                    const typeStr = EmbedType[data.post.embed.type] || "Unknown Embed";
+                    const type = record.embed["$type"];
                     const typeHeader = document.createElement("div");
                     typeHeader.className = "embed-type";
-                    typeHeader.textContent = `[${typeStr}]`;
+                    typeHeader.textContent = type ? `[${type.split('.').pop()}]` : "[Embed]";
                     embedDiv.appendChild(typeHeader);
 
-                    // Handle External Link
-                    if (data.post.embed.type === 2 && data.post.embed.external) {
+                    if (record.embed.external) {
+                        const ext = record.embed.external;
                         const linkDiv = document.createElement("div");
                         linkDiv.className = "embed-link";
                         const a = document.createElement("a");
-                        a.href = data.post.embed.external.url;
+                        a.href = ext.uri;
                         a.target = "_blank";
-                        a.textContent = data.post.embed.external.title || data.post.embed.external.url;
+                        a.textContent = ext.title || ext.uri;
                         linkDiv.appendChild(a);
 
-                        if (data.post.embed.external.description) {
+                        if (ext.description) {
                             const desc = document.createElement("div");
                             desc.style.fontSize = "0.8em";
                             desc.style.color = "#ccc";
-                            desc.textContent = data.post.embed.external.description;
+                            desc.textContent = ext.description;
                             linkDiv.appendChild(desc);
                         }
                         embedDiv.appendChild(linkDiv);
                     }
 
-                    // Handle Images
-                    if (data.post.embed.type === 1 && data.post.embed.images) {
+                    if (record.embed.images) {
                         const imgInfo = document.createElement("div");
-                        imgInfo.textContent = `${data.post.embed.images.length} image(s)`;
+                        imgInfo.textContent = `${record.embed.images.length} image(s)`;
                         embedDiv.appendChild(imgInfo);
-                    }
-
-                    // Handle Video
-                    if (data.post.embed.type === 4 && data.post.embed.video) {
-                         const vidInfo = document.createElement("div");
-                         vidInfo.textContent = "Video attached";
-                         embedDiv.appendChild(vidInfo);
                     }
 
                     li.appendChild(embedDiv);
                 }
 
+                list.prepend(li); // Newest at top
+
             } catch (e) {
                 console.error(e);
-                li.textContent = evt.data;
+                li.textContent = "Error parsing: " + evt.data;
+                list.prepend(li);
             }
-
-            list.prepend(li); // Newest at top
 
             // Keep list size manageable
             if (list.children.length > 100) {
