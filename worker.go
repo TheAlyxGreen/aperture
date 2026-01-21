@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"regexp"
-	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/TheAlyxGreen/firefly"
 )
@@ -25,6 +25,27 @@ type CompiledRuleSet struct {
 type BroadcastMessage struct {
 	Event        interface{} `json:"event"` // Sending RawCommit (models.Event)
 	MatchedRules []string    `json:"matchedRules"`
+}
+
+// RuleStats tracks the number of matches for each rule
+type RuleStats struct {
+	counts sync.Map // map[string]*int64
+}
+
+var GlobalRuleStats = &RuleStats{}
+
+func (rs *RuleStats) Increment(ruleName string) {
+	val, _ := rs.counts.LoadOrStore(ruleName, new(int64))
+	atomic.AddInt64(val.(*int64), 1)
+}
+
+func (rs *RuleStats) GetCounts() map[string]int64 {
+	result := make(map[string]int64)
+	rs.counts.Range(func(key, value interface{}) bool {
+		result[key.(string)] = atomic.LoadInt64(value.(*int64))
+		return true
+	})
+	return result
 }
 
 func StartDispatcher(numWorkers int, jobQueue <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules []CompiledRuleSet) {
@@ -68,22 +89,20 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 		}
 
 		// 3. Determine Target User
-		extractDID := func(uri string) string {
-			if strings.HasPrefix(uri, "at://") {
-				parts := strings.Split(uri, "/")
-				if len(parts) >= 3 {
-					return parts[2]
-				}
+		getDID := func(uri string) string {
+			did, err := firefly.ExtractDidFromUri(uri)
+			if err != nil && err != firefly.ErrNoDid {
+				return ""
 			}
-			return ""
+			return did
 		}
 
 		if event.LikeEvent != nil && event.LikeEvent.Subject != nil {
-			targetUserDID = extractDID(event.LikeEvent.Subject.URI)
+			targetUserDID = getDID(event.LikeEvent.Subject.URI)
 		} else if event.RepostEvent != nil && event.RepostEvent.Subject != nil {
-			targetUserDID = extractDID(event.RepostEvent.Subject.URI)
+			targetUserDID = getDID(event.RepostEvent.Subject.URI)
 		} else if event.Post != nil && event.Post.ReplyInfo != nil {
-			targetUserDID = extractDID(event.Post.ReplyInfo.ReplyTarget.URI)
+			targetUserDID = getDID(event.Post.ReplyInfo.ReplyTarget.URI)
 		}
 
 		var matchedRules []string
@@ -237,6 +256,7 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 
 			// Rule matched
 			matchedRules = append(matchedRules, rule.Name)
+			GlobalRuleStats.Increment(rule.Name)
 		}
 
 		if len(matchedRules) > 0 {

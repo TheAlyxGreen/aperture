@@ -21,6 +21,7 @@ It includes a powerful **Web Client** for visualizing and debugging the stream i
     *   **Languages**: Filter by post language (e.g., en, ja).
     *   **Reply Status**: Filter by whether the post is a reply or an original post.
 *   **WebSocket Feed**: Consumes filtered events via a WebSocket connection.
+*   **Metrics**: Tracks match counts for each rule in real-time.
 
 ## Web Client
 
@@ -35,6 +36,9 @@ Aperture comes with a built-in web client (`client.html`) accessible at `http://
 *   **Client-side Filtering**:
     *   Toggle specific **RuleSets** on/off to isolate traffic without restarting the server.
     *   Retroactive filtering applies to the current event buffer.
+*   **Real-time Metrics**:
+    *   Displays the match rate (events/sec) for each rule in the sidebar.
+    *   Hover over the rate to see the total match count since server start.
 *   **Inspection Tools**:
     *   **Show Raw JSON**: Toggle to view the full raw JSON payload for any event.
     *   **Show Images**: Toggle image loading to save bandwidth/memory.
@@ -66,6 +70,17 @@ Returns the list of configured RuleSet names.
 *   **Response**:
     ```json
     ["Tech News", "Specific User", "Everything"]
+    ```
+
+#### `GET /stats`
+Returns the total match counts for each rule since server start.
+*   **Response**:
+    ```json
+    {
+      "Tech News": 150,
+      "Specific User": 5,
+      "Everything": 12000
+    }
     ```
 
 ### WebSocket API
@@ -123,7 +138,7 @@ Create a `config.json` file in the root directory.
     {
       "name": "Specific User",
       "collections": ["app.bsky.feed.post", "app.bsky.feed.repost"],
-      "authors": ["did:plc:12345"]
+      "authors": ["did:plc:12345", "alice.bsky.social"]
     },
     {
       "name": "Interactions with User",

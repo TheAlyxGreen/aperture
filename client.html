@@ -6,7 +6,7 @@
     <style>
         body { font-family: monospace; background: #222; color: #eee; padding: 20px; display: flex; gap: 20px; }
         #sidebar { width: 250px; flex-shrink: 0; }
-        #main { flex-grow: 1; }
+        #main { flex-grow: 1; min-width: 0; }
 
         a { color: #4af; text-decoration: none; }
         a:hover { text-decoration: underline; }
@@ -39,8 +39,19 @@
             overflow-x: hidden;          /* Hide horizontal scroll */
         }
 
-        .rule-filter { margin-bottom: 5px; display: block; cursor: pointer; }
+        .rule-filter { margin-bottom: 5px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .rule-filter div { display: flex; align-items: center; }
         .rule-filter input { margin-right: 8px; }
+        .rule-count {
+            font-size: 0.8em;
+            color: #888;
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 10px;
+            cursor: help;
+            min-width: 30px;
+            text-align: center;
+        }
         h2 { font-size: 1.2em; margin-top: 0; }
 
         .config-section { margin-top: 20px; border-top: 1px solid #444; padding-top: 10px; }
@@ -122,6 +133,10 @@
         let allRules = [];
         let rulesLoaded = false;
         let serverConfig = { bskyServer: "https://bsky.social" }; // Default
+
+        let ruleStats = {};
+        let prevRuleStats = {};
+        let lastPollTime = 0;
 
         // State
         let isPaused = false;
@@ -268,12 +283,57 @@
                 renderRuleFilters();
                 rulesLoaded = true;
                 rerenderAll();
+
+                // Start stats polling
+                pollStats();
             })
             .catch(err => {
                 ruleList.textContent = "Error loading rules: " + err;
                 console.error("Error loading rules:", err);
                 rulesLoaded = false;
             });
+
+        function pollStats() {
+            fetch('/stats')
+                .then(response => response.json())
+                .then(stats => {
+                    const now = Date.now();
+
+                    // Calculate rates
+                    if (lastPollTime > 0) {
+                        const elapsedSec = (now - lastPollTime) / 1000;
+                        if (elapsedSec > 0) {
+                            updateRuleStats(stats, prevRuleStats, elapsedSec);
+                        }
+                    }
+
+                    prevRuleStats = stats;
+                    lastPollTime = now;
+                })
+                .catch(e => console.error("Stats poll error:", e))
+                .finally(() => {
+                    setTimeout(pollStats, 2000); // Poll every 2s
+                });
+        }
+
+        function updateRuleStats(current, previous, elapsedSec) {
+            const counts = document.querySelectorAll('.rule-count');
+            counts.forEach(el => {
+                const ruleName = el.dataset.rule;
+                if (current[ruleName] !== undefined) {
+                    const total = current[ruleName];
+                    const prev = previous[ruleName] || 0;
+                    const diff = total - prev;
+                    const rate = diff / elapsedSec;
+
+                    // Format rate: if < 1, show decimals, else integer
+                    const rateStr = rate < 1 && rate > 0 ? rate.toFixed(1) : Math.round(rate).toString();
+
+                    el.textContent = `${rateStr}/s`;
+                    el.title = `Total matches: ${total}`;
+                }
+            });
+        }
 
         function renderRuleFilters() {
             ruleList.innerHTML = "";
@@ -286,6 +346,8 @@
             // "All" toggle
             const allLabel = document.createElement("label");
             allLabel.className = "rule-filter";
+            const allDiv = document.createElement("div");
+
             const allCheck = document.createElement("input");
             allCheck.type = "checkbox";
             // Check if all rules are active
@@ -293,8 +355,9 @@
             allCheck.checked = allActive;
 
             allCheck.onchange = (e) => toggleAll(e.target.checked);
-            allLabel.appendChild(allCheck);
-            allLabel.appendChild(document.createTextNode("Select All"));
+            allDiv.appendChild(allCheck);
+            allDiv.appendChild(document.createTextNode("Select All"));
+            allLabel.appendChild(allDiv);
             ruleList.appendChild(allLabel);
 
             ruleList.appendChild(document.createElement("hr"));
@@ -305,14 +368,24 @@
                 const label = document.createElement("label");
                 label.className = "rule-filter";
 
+                const leftDiv = document.createElement("div");
                 const check = document.createElement("input");
                 check.type = "checkbox";
                 check.checked = activeRules.has(rule);
                 check.value = rule;
                 check.onchange = (e) => toggleRule(rule, e.target.checked);
 
-                label.appendChild(check);
-                label.appendChild(document.createTextNode(rule));
+                leftDiv.appendChild(check);
+                leftDiv.appendChild(document.createTextNode(rule));
+                label.appendChild(leftDiv);
+
+                const countSpan = document.createElement("span");
+                countSpan.className = "rule-count";
+                countSpan.dataset.rule = rule;
+                countSpan.textContent = "0/s";
+                countSpan.title = "Total matches: 0";
+                label.appendChild(countSpan);
+
                 ruleList.appendChild(label);
             });
         }

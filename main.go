@@ -115,11 +115,15 @@ func main() {
 	var collections []string
 	if !subscribeToAllCollections {
 		for c := range collectionsMap {
-			collections = append(collections, c)
+			// Exclude pseudo-collections used for internal filtering
+			if c != "identity" && c != "account" {
+				collections = append(collections, c)
+			}
 		}
 		if len(collections) == 0 {
-			// Default to posts if nothing specified, to avoid empty stream
-			collections = []string{"app.bsky.feed.post"}
+			if len(collectionsMap) == 0 {
+				collections = []string{"app.bsky.feed.post"}
+			}
 		}
 		log.Printf("Subscribing to collections: %v", collections)
 	} else {
@@ -228,6 +232,11 @@ func main() {
 		json.NewEncoder(w).Encode(PublicConfig{
 			BskyServer: config.BskyServer,
 		})
+	})
+
+	http.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(GlobalRuleStats.GetCounts())
 	})
 
 	addr := fmt.Sprintf(":%d", config.Port)
