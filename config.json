@@ -25,9 +25,8 @@
       "isReply": false
     },
     {
-      "name": "Quote Posts",
-      "collections": ["app.bsky.feed.post"],
-      "embedTypes": ["record"]
+      "name": "Account Updates",
+      "collections": ["identity", "account"]
     },
     {
       "name": "Everything",

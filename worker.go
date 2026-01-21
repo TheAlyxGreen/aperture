@@ -53,6 +53,10 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 			authorDID = event.RawCommit.Did
 			if event.RawCommit.Commit != nil {
 				collection = event.RawCommit.Commit.Collection
+			} else if event.RawCommit.Identity != nil {
+				collection = "identity"
+			} else if event.RawCommit.Account != nil {
+				collection = "account"
 			}
 		}
 
@@ -103,6 +107,7 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 		case firefly.EventTypePost:
 			if event.Post != nil && event.Post.ReplyInfo != nil {
 				// For replies, the target is the parent post's author
+				// Note: Firefly uses ReplyTarget, not Parent, for the immediate reply target
 				targetUserDID = extractDID(event.Post.ReplyInfo.ReplyTarget.Uri)
 			}
 			// Add Follow support if Firefly exposes it in a friendly way, otherwise we'd need to parse RawCommit record

@@ -6,7 +6,7 @@
     <style>
         body { font-family: monospace; background: #222; color: #eee; padding: 20px; display: flex; gap: 20px; }
         #sidebar { width: 250px; flex-shrink: 0; }
-        #main { flex-grow: 1; min-width: 0; /* Allows flex child to shrink below content size */ }
+        #main { flex-grow: 1; }
 
         a { color: #4af; text-decoration: none; }
         a:hover { text-decoration: underline; }
@@ -399,6 +399,70 @@
             return null;
         }
 
+        function renderRichText(text, facets) {
+            if (!facets || facets.length === 0) return document.createTextNode(text);
+
+            // Sort facets by byteStart
+            facets.sort((a, b) => a.index.byteStart - b.index.byteStart);
+
+            const encoder = new TextEncoder();
+            const decoder = new TextDecoder();
+            const bytes = encoder.encode(text);
+
+            const fragment = document.createDocumentFragment();
+            let lastIndex = 0;
+
+            facets.forEach(facet => {
+                const start = facet.index.byteStart;
+                const end = facet.index.byteEnd;
+
+                // Text before facet
+                if (start > lastIndex) {
+                    const part = decoder.decode(bytes.slice(lastIndex, start));
+                    fragment.appendChild(document.createTextNode(part));
+                }
+
+                // Facet text
+                const facetText = decoder.decode(bytes.slice(start, end));
+                let el = document.createTextNode(facetText);
+
+                // Check features
+                if (facet.features && facet.features.length > 0) {
+                    const feature = facet.features[0];
+                    if (feature["$type"] === "app.bsky.richtext.facet#tag") {
+                        const a = document.createElement("a");
+                        a.href = `https://bsky.app/hashtag/${feature.tag}`;
+                        a.target = "_blank";
+                        a.textContent = facetText;
+                        el = a;
+                    } else if (feature["$type"] === "app.bsky.richtext.facet#mention") {
+                        const a = document.createElement("a");
+                        a.href = `https://bsky.app/profile/${feature.did}`;
+                        a.target = "_blank";
+                        a.textContent = facetText;
+                        el = a;
+                    } else if (feature["$type"] === "app.bsky.richtext.facet#link") {
+                        const a = document.createElement("a");
+                        a.href = feature.uri;
+                        a.target = "_blank";
+                        a.textContent = facetText;
+                        el = a;
+                    }
+                }
+
+                fragment.appendChild(el);
+                lastIndex = end;
+            });
+
+            // Text after last facet
+            if (lastIndex < bytes.length) {
+                const part = decoder.decode(bytes.slice(lastIndex));
+                fragment.appendChild(document.createTextNode(part));
+            }
+
+            return fragment;
+        }
+
         function createEventElement(msg) {
             const li = document.createElement("li");
             const event = msg.event;
@@ -421,6 +485,12 @@
             } else if (event.post) {
                 record = event.post;
                 collection = "app.bsky.feed.post"; // Fallback
+            } else if (event.kind === "identity" && event.identity) {
+                record = event.identity;
+                collection = "identity";
+            } else if (event.kind === "account" && event.account) {
+                record = event.account;
+                collection = "account";
             }
 
             // Determine Author Display
@@ -481,11 +551,21 @@
             if (operation === "delete") {
                 const collName = collection ? collection.split('.').pop() : "item";
                 content.innerHTML = `<span class="action">🗑️ Deleted ${collName}</span> <span style="color:#888">${rkey}</span>`;
+            } else if (collection === "identity") {
+                content.innerHTML = `<span class="action">🆕 Identity Update</span> <a href="https://bsky.app/profile/${record.did}" target="_blank">${record.handle}</a>`;
+            } else if (collection === "account") {
+                const status = record.active ? "✅ Account Active" : "❌ Account Inactive/Suspended";
+                content.innerHTML = `<span class="action">${status}</span> <a href="https://bsky.app/profile/${record.did}" target="_blank">${record.did}</a>`;
             } else if (record) {
                 const type = record["$type"] || "unknown";
 
                 if (type === "app.bsky.feed.post" || record.text) {
-                    content.textContent = record.text || "[No Text]";
+                    if (record.text) {
+                        content.innerHTML = ""; // Clear
+                        content.appendChild(renderRichText(record.text, record.facets));
+                    } else {
+                        content.textContent = "[No Text]";
+                    }
                 } else if (type === "app.bsky.feed.like") {
                     const link = getBskyLink(record.subject.uri);
                     const rkeyText = getRKey(record.subject.uri);
