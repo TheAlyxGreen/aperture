@@ -3,7 +3,7 @@ module github.com/TheAlyxGreen/aperture
 go 1.24
 
 require (
-	github.com/TheAlyxGreen/firefly v0.0.0-20260109232439-3ddbee39fd96
+	github.com/TheAlyxGreen/firefly v0.0.0-20260121175534-4769cf0a8b34
 	github.com/gorilla/websocket v1.5.3
 )
 

@@ -25,7 +25,6 @@ type CompiledRuleSet struct {
 type BroadcastMessage struct {
 	Event        interface{} `json:"event"` // Sending RawCommit (models.Event)
 	MatchedRules []string    `json:"matchedRules"`
-	AuthorHandle string      `json:"authorHandle,omitempty"` // Enriched handle if available
 }
 
 func StartDispatcher(numWorkers int, jobQueue <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules []CompiledRuleSet) {
@@ -45,46 +44,30 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 		// Determine the collection of the event
 		var collection string
 		var authorDID string
-		var authorHandle string
 		var targetUserDID string
 
-		// Try to get data from RawCommit first
-		if event.RawCommit != nil {
-			authorDID = event.RawCommit.Did
-			if event.RawCommit.Commit != nil {
-				collection = event.RawCommit.Commit.Collection
-			} else if event.RawCommit.Identity != nil {
-				collection = "identity"
-			} else if event.RawCommit.Account != nil {
-				collection = "account"
+		// 1. Determine Author
+		authorDID = event.Repo
+
+		// 2. Determine Collection
+		switch event.Type {
+		case firefly.EventTypePost:
+			collection = "app.bsky.feed.post"
+		case firefly.EventTypeLike:
+			collection = "app.bsky.feed.like"
+		case firefly.EventTypeRepost:
+			collection = "app.bsky.feed.repost"
+		case firefly.EventTypeDelete:
+			if event.DeleteEvent != nil {
+				collection = event.DeleteEvent.Collection
 			}
+		case firefly.EventTypeIdentity:
+			collection = "identity"
+		case firefly.EventTypeAccount:
+			collection = "account"
 		}
 
-		// Fallback / Fill gaps from friendly event
-		if authorDID == "" {
-			authorDID = event.Repo
-		}
-
-		// Try to get handle if available (friendly event might have it)
-		if event.Post != nil && event.Post.Author != nil {
-			authorHandle = event.Post.Author.Handle
-		} else if event.User != nil {
-			authorHandle = event.User.Handle
-		}
-
-		if collection == "" {
-			switch event.Type {
-			case firefly.EventTypePost:
-				collection = "app.bsky.feed.post"
-			case firefly.EventTypeLike:
-				collection = "app.bsky.feed.like"
-			case firefly.EventTypeRepost:
-				collection = "app.bsky.feed.repost"
-			}
-		}
-
-		// Determine Target User based on event type
-		// Note: We need to extract the DID from the URI (at://did:plc:123/...)
+		// 3. Determine Target User
 		extractDID := func(uri string) string {
 			if strings.HasPrefix(uri, "at://") {
 				parts := strings.Split(uri, "/")
@@ -95,22 +78,12 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 			return ""
 		}
 
-		switch event.Type {
-		case firefly.EventTypeLike:
-			if event.LikeEvent != nil {
-				targetUserDID = extractDID(event.LikeEvent.Subject.Uri)
-			}
-		case firefly.EventTypeRepost:
-			if event.RepostEvent != nil {
-				targetUserDID = extractDID(event.RepostEvent.Subject.Uri)
-			}
-		case firefly.EventTypePost:
-			if event.Post != nil && event.Post.ReplyInfo != nil {
-				// For replies, the target is the parent post's author
-				// Note: Firefly uses ReplyTarget, not Parent, for the immediate reply target
-				targetUserDID = extractDID(event.Post.ReplyInfo.ReplyTarget.Uri)
-			}
-			// Add Follow support if Firefly exposes it in a friendly way, otherwise we'd need to parse RawCommit record
+		if event.LikeEvent != nil && event.LikeEvent.Subject != nil {
+			targetUserDID = extractDID(event.LikeEvent.Subject.URI)
+		} else if event.RepostEvent != nil && event.RepostEvent.Subject != nil {
+			targetUserDID = extractDID(event.RepostEvent.Subject.URI)
+		} else if event.Post != nil && event.Post.ReplyInfo != nil {
+			targetUserDID = extractDID(event.Post.ReplyInfo.ReplyTarget.URI)
 		}
 
 		var matchedRules []string
@@ -201,26 +174,27 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 				}
 
 				embedMatch := false
-				var currentType string
 				if event.Post.Embed != nil {
-					switch event.Post.Embed.Type {
-					case firefly.EmbedTypeImages:
-						currentType = "images"
-					case firefly.EmbedTypeVideo:
-						currentType = "video"
-					case firefly.EmbedTypeExternal:
-						currentType = "external"
-					case firefly.EmbedTypeRecord:
-						currentType = "record"
+					for _, t := range rule.EmbedTypes {
+						if t == "images" && len(event.Post.Embed.Images) > 0 {
+							embedMatch = true
+							break
+						}
+						if t == "video" && event.Post.Embed.Video != nil {
+							embedMatch = true
+							break
+						}
+						if t == "external" && event.Post.Embed.External != nil {
+							embedMatch = true
+							break
+						}
+						if t == "record" && event.Post.Embed.Record != nil {
+							embedMatch = true
+							break
+						}
 					}
 				}
 
-				for _, t := range rule.EmbedTypes {
-					if t == currentType {
-						embedMatch = true
-						break
-					}
-				}
 				if !embedMatch {
 					continue
 				}
@@ -275,7 +249,6 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 			msg := BroadcastMessage{
 				Event:        payload,
 				MatchedRules: matchedRules,
-				AuthorHandle: authorHandle,
 			}
 
 			data, err := json.Marshal(msg)
