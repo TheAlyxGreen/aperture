@@ -6,47 +6,250 @@
     <style>
         body { font-family: monospace; background: #222; color: #eee; padding: 20px; display: flex; gap: 20px; }
         #sidebar { width: 250px; flex-shrink: 0; }
-        #main { flex-grow: 1; }
+        #main { flex-grow: 1; min-width: 0; /* Allows flex child to shrink below content size */ }
+
+        a { color: #4af; text-decoration: none; }
+        a:hover { text-decoration: underline; }
 
         #messages { list-style-type: none; padding: 0; }
         #messages li { padding: 10px; border-bottom: 1px solid #444; display: flex; flex-direction: column; }
         .meta { font-size: 0.8em; color: #888; margin-bottom: 4px; display: flex; justify-content: space-between; }
-        .author { color: #4af; font-weight: bold; margin-right: 10px; }
+        .author a { font-weight: bold; margin-right: 10px; }
         .rules { color: #f88; font-weight: bold; }
-        .content { font-size: 1.1em; white-space: pre-wrap; margin-top: 5px; }
+        .content { font-size: 1.1em; white-space: pre-wrap; margin-top: 5px; word-wrap: break-word; }
         .embed { margin-top: 8px; padding: 8px; background: #333; border-radius: 4px; font-size: 0.9em; }
         .embed-type { font-weight: bold; color: #aaa; margin-bottom: 4px; }
-        .embed-link a { color: #4af; text-decoration: none; }
-        .embed-link a:hover { text-decoration: underline; }
         .action { font-weight: bold; color: #aaa; }
-        #status { color: #888; margin-bottom: 10px; }
+        .post-link { margin-left: 10px; color: #666; }
+        .post-link:hover { color: #aaa; }
+
+        .image-grid { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+        .post-image { max-width: 100%; max-height: 300px; border-radius: 4px; object-fit: cover; }
+        .image-placeholder { color: #888; font-style: italic; margin-top: 5px; }
+
+        .raw-json {
+            margin-top: 10px;
+            padding: 10px;
+            background: #111;
+            color: #8f8;
+            font-size: 0.8em;
+            border-radius: 4px;
+            white-space: pre-wrap;       /* Wrap text */
+            word-wrap: break-word;       /* Break long words */
+            overflow-x: hidden;          /* Hide horizontal scroll */
+        }
 
         .rule-filter { margin-bottom: 5px; display: block; cursor: pointer; }
         .rule-filter input { margin-right: 8px; }
         h2 { font-size: 1.2em; margin-top: 0; }
+
+        .config-section { margin-top: 20px; border-top: 1px solid #444; padding-top: 10px; }
+        .config-item { margin-bottom: 10px; }
+        .config-item label { display: block; margin-bottom: 5px; color: #aaa; font-size: 0.9em; }
+        .config-item input[type="number"] { width: 100%; box-sizing: border-box; background: #333; border: 1px solid #555; color: #eee; padding: 5px; }
+        .config-checkbox { display: flex; align-items: center; cursor: pointer; margin-bottom: 5px; }
+        .config-checkbox input { margin-right: 8px; }
+
+        .btn {
+            width: 100%;
+            padding: 8px;
+            margin-bottom: 10px;
+            background: #444;
+            color: #eee;
+            border: none;
+            cursor: pointer;
+            font-family: monospace;
+            font-weight: bold;
+            border-radius: 4px;
+        }
+        .btn:hover { background: #555; }
+        .btn.connect { background: #2a2; color: #fff; } /* Green for Connect action */
+        .btn.disconnect { background: #a22; color: #fff; } /* Red for Disconnect action */
+        .btn.paused { background: #aa2; color: #fff; }
     </style>
 </head>
 <body>
     <div id="sidebar">
-        <h2>Filters</h2>
-        <div id="rule-list">Loading rules...</div>
+        <h2>Controls</h2>
+        <button id="btn-connect" class="btn disconnect">Disconnect</button>
+        <button id="btn-pause" class="btn">Pause Rendering</button>
+
+        <div class="config-section">
+            <h2>Filters</h2>
+            <div id="rule-list">Loading rules...</div>
+        </div>
+
+        <div class="config-section">
+            <h2>Settings</h2>
+            <div class="config-item">
+                <label for="buffer-size">Buffer Size (Memory)</label>
+                <input type="number" id="buffer-size" value="2000" min="100" max="10000">
+            </div>
+            <div class="config-item">
+                <label for="display-limit">Display Limit (DOM)</label>
+                <input type="number" id="display-limit" value="100" min="10" max="1000">
+            </div>
+            <div class="config-item">
+                <label class="config-checkbox">
+                    <input type="checkbox" id="show-images">
+                    Show Images
+                </label>
+                <label class="config-checkbox">
+                    <input type="checkbox" id="show-raw">
+                    Show Raw JSON
+                </label>
+            </div>
+        </div>
     </div>
 
     <div id="main">
         <h1>Aperture Feed</h1>
-        <div id="status">Connecting...</div>
         <ul id="messages"></ul>
     </div>
 
     <script>
-        const ws = new WebSocket("ws://localhost:8080/ws");
         const list = document.getElementById("messages");
-        const status = document.getElementById("status");
         const ruleList = document.getElementById("rule-list");
+        const bufferInput = document.getElementById("buffer-size");
+        const displayInput = document.getElementById("display-limit");
+        const showImagesInput = document.getElementById("show-images");
+        const showRawInput = document.getElementById("show-raw");
+        const btnConnect = document.getElementById("btn-connect");
+        const btnPause = document.getElementById("btn-pause");
 
+        let ws = null;
         let activeRules = new Set();
         let allRules = [];
         let rulesLoaded = false;
+        let serverConfig = { bskyServer: "https://bsky.social" }; // Default
+
+        // State
+        let isPaused = false;
+        let isConnected = false;
+
+        // Buffer to store recent events for re-filtering
+        let maxBufferSize = 2000;
+        let maxDisplayLimit = 100;
+        let showImages = false;
+        let showRaw = false;
+        let eventBuffer = [];
+
+        // Persistence
+        function saveState() {
+            const state = {
+                activeRules: Array.from(activeRules),
+                maxBufferSize: maxBufferSize,
+                maxDisplayLimit: maxDisplayLimit,
+                showImages: showImages,
+                showRaw: showRaw
+            };
+            sessionStorage.setItem('apertureState', JSON.stringify(state));
+        }
+
+        function loadState() {
+            const saved = sessionStorage.getItem('apertureState');
+            if (saved) {
+                try {
+                    const state = JSON.parse(saved);
+                    if (state.activeRules) activeRules = new Set(state.activeRules);
+                    if (state.maxBufferSize) maxBufferSize = state.maxBufferSize;
+                    if (state.maxDisplayLimit) maxDisplayLimit = state.maxDisplayLimit;
+                    if (state.showImages !== undefined) showImages = state.showImages;
+                    if (state.showRaw !== undefined) showRaw = state.showRaw;
+
+                    // Update UI
+                    bufferInput.value = maxBufferSize;
+                    displayInput.value = maxDisplayLimit;
+                    showImagesInput.checked = showImages;
+                    showRawInput.checked = showRaw;
+                } catch (e) {
+                    console.error("Failed to load state:", e);
+                }
+            }
+        }
+
+        // Load state immediately
+        loadState();
+
+        // Controls
+        btnConnect.onclick = function() {
+            if (isConnected) {
+                // User clicked Disconnect
+                btnConnect.textContent = "Disconnecting...";
+                btnConnect.disabled = true;
+                if (ws) ws.close();
+            } else {
+                // User clicked Connect
+                btnConnect.textContent = "Connecting...";
+                btnConnect.disabled = true;
+                connect();
+            }
+        };
+
+        btnPause.onclick = function() {
+            isPaused = !isPaused;
+            if (isPaused) {
+                btnPause.textContent = "Resume Rendering";
+                btnPause.classList.add("paused");
+            } else {
+                btnPause.textContent = "Pause Rendering";
+                btnPause.classList.remove("paused");
+                rerenderAll(); // Catch up
+            }
+        };
+
+        // Config Listeners
+        bufferInput.onchange = function() {
+            let val = parseInt(this.value);
+            if (isNaN(val)) val = 2000;
+            if (val < 100) val = 100;
+            if (val > 10000) val = 10000;
+
+            this.value = val;
+            maxBufferSize = val;
+
+            // Trim buffer if needed
+            if (eventBuffer.length > maxBufferSize) {
+                eventBuffer = eventBuffer.slice(0, maxBufferSize);
+            }
+            saveState();
+            rerenderAll();
+        };
+
+        displayInput.onchange = function() {
+            let val = parseInt(this.value);
+            if (isNaN(val)) val = 100;
+            if (val < 10) val = 10;
+            if (val > 1000) val = 1000;
+
+            this.value = val;
+            maxDisplayLimit = val;
+            saveState();
+            rerenderAll();
+        };
+
+        showImagesInput.onchange = function() {
+            showImages = this.checked;
+            saveState();
+            rerenderAll();
+        };
+
+        showRawInput.onchange = function() {
+            showRaw = this.checked;
+            saveState();
+            rerenderAll();
+        };
+
+        // Fetch config
+        fetch('/config')
+            .then(response => response.json())
+            .then(config => {
+                console.log("Config loaded:", config);
+                if (config.bskyServer) {
+                    serverConfig.bskyServer = config.bskyServer;
+                }
+            })
+            .catch(err => console.error("Error loading config:", err));
 
         // Fetch rules
         fetch('/rules')
@@ -54,8 +257,17 @@
             .then(rules => {
                 console.log("Rules loaded:", rules);
                 allRules = rules || [];
+
+                // If we loaded activeRules from session, we need to make sure they are valid
+                // But we trust session for now.
+                // If session was empty (first load), default to all active
+                if (!sessionStorage.getItem('apertureState')) {
+                    allRules.forEach(r => activeRules.add(r));
+                }
+
                 renderRuleFilters();
                 rulesLoaded = true;
+                rerenderAll();
             })
             .catch(err => {
                 ruleList.textContent = "Error loading rules: " + err;
@@ -76,7 +288,10 @@
             allLabel.className = "rule-filter";
             const allCheck = document.createElement("input");
             allCheck.type = "checkbox";
-            allCheck.checked = true;
+            // Check if all rules are active
+            const allActive = allRules.every(r => activeRules.has(r));
+            allCheck.checked = allActive;
+
             allCheck.onchange = (e) => toggleAll(e.target.checked);
             allLabel.appendChild(allCheck);
             allLabel.appendChild(document.createTextNode("Select All"));
@@ -85,14 +300,14 @@
             ruleList.appendChild(document.createElement("hr"));
 
             allRules.forEach(rule => {
-                activeRules.add(rule); // Default all active
+                // Note: activeRules is already populated from loadState or default
 
                 const label = document.createElement("label");
                 label.className = "rule-filter";
 
                 const check = document.createElement("input");
                 check.type = "checkbox";
-                check.checked = true;
+                check.checked = activeRules.has(rule);
                 check.value = rule;
                 check.onchange = (e) => toggleRule(rule, e.target.checked);
 
@@ -111,6 +326,8 @@
             } else {
                 activeRules.clear();
             }
+            saveState();
+            rerenderAll();
         }
 
         function toggleRule(rule, checked) {
@@ -119,158 +336,334 @@
             } else {
                 activeRules.delete(rule);
             }
+
+            // Update "Select All" checkbox state
+            const allCheck = ruleList.querySelector('input[type="checkbox"]'); // First one is Select All
+            if (allCheck) {
+                const allActive = allRules.every(r => activeRules.has(r));
+                allCheck.checked = allActive;
+            }
+
+            saveState();
+            rerenderAll();
         }
 
-        ws.onopen = function() {
-            status.textContent = "Connected";
-            status.style.color = "#4f4";
-        };
+        function rerenderAll() {
+            // Don't rerender if paused (unless we want to force update? Usually pause means freeze UI)
+            // But if user changes filters while paused, they might expect update?
+            // Let's allow rerender if triggered manually, but onmessage won't trigger it.
 
-        ws.onmessage = function(evt) {
-            let li = document.createElement("li");
+            list.innerHTML = "";
 
-            try {
-                const msg = JSON.parse(evt.data);
-                const event = msg.event;
-                const rules = msg.matchedRules || [];
-                const handle = msg.authorHandle;
+            let count = 0;
+            for (const msg of eventBuffer) {
+                if (count >= maxDisplayLimit) break;
 
-                console.log("Received:", rules, event);
-
-                // Client-side filtering
-                if (rulesLoaded && allRules.length > 0) {
-                    const isVisible = rules.some(r => activeRules.has(r));
-                    if (!isVisible) {
-                        console.log("Filtered out. Active rules:", Array.from(activeRules));
-                        return;
-                    }
+                if (shouldShow(msg)) {
+                    const li = createEventElement(msg);
+                    list.appendChild(li);
+                    count++;
                 }
+            }
+        }
 
-                // Try to locate the record.
-                let record = null;
-                if (event.commit && event.commit.record) {
-                    record = event.commit.record;
-                } else if (event.record) {
-                    record = event.record;
-                } else if (event.post) {
-                    record = event.post;
-                }
+        function shouldShow(msg) {
+            if (!rulesLoaded || allRules.length === 0) return true;
+            const rules = msg.matchedRules || [];
+            return rules.some(r => activeRules.has(r));
+        }
 
-                // Determine Author Display
-                let authorDisplay = handle || event.did || event.repo || "Unknown";
+        function getBskyLink(uri) {
+            if (!uri || !uri.startsWith("at://")) return null;
+            const parts = uri.split('/');
+            if (parts.length >= 5) {
+                const did = parts[2];
+                const rkey = parts[4];
+                return `https://bsky.app/profile/${did}/post/${rkey}`;
+            }
+            return null;
+        }
 
-                // Meta info
-                const meta = document.createElement("div");
-                meta.className = "meta";
+        function getRKey(uri) {
+            if (!uri) return "Unknown";
+            const parts = uri.split('/');
+            return parts.length > 0 ? parts[parts.length - 1] : uri;
+        }
 
-                const leftMeta = document.createElement("div");
+        function getDID(uri) {
+            if (!uri || !uri.startsWith("at://")) return null;
+            const parts = uri.split('/');
+            if (parts.length >= 3) {
+                return parts[2];
+            }
+            return null;
+        }
 
-                const authorSpan = document.createElement("span");
-                authorSpan.className = "author";
+        function createEventElement(msg) {
+            const li = document.createElement("li");
+            const event = msg.event;
+            const rules = msg.matchedRules || [];
+            const handle = msg.authorHandle;
+
+            // Try to locate the record.
+            let record = null;
+            let rkey = null;
+            let collection = null;
+            let operation = null;
+
+            if (event.commit) {
+                if (event.commit.record) record = event.commit.record;
+                if (event.commit.rkey) rkey = event.commit.rkey;
+                if (event.commit.collection) collection = event.commit.collection;
+                if (event.commit.operation) operation = event.commit.operation;
+            } else if (event.record) {
+                record = event.record;
+            } else if (event.post) {
+                record = event.post;
+                collection = "app.bsky.feed.post"; // Fallback
+            }
+
+            // Determine Author Display
+            let authorDisplay = handle || event.did || event.repo || "Unknown";
+            let authorDID = event.did || event.repo || "";
+
+            // Meta info
+            const meta = document.createElement("div");
+            meta.className = "meta";
+
+            const leftMeta = document.createElement("div");
+
+            const authorSpan = document.createElement("span");
+            authorSpan.className = "author";
+
+            if (authorDisplay !== "Unknown") {
+                const authorLink = document.createElement("a");
+                authorLink.href = `https://bsky.app/profile/${authorDisplay}`;
+                authorLink.target = "_blank";
+                authorLink.textContent = "@" + authorDisplay;
+                authorSpan.appendChild(authorLink);
+            } else {
                 authorSpan.textContent = "@" + authorDisplay;
-                leftMeta.appendChild(authorSpan);
+            }
 
-                const timeSpan = document.createElement("span");
-                timeSpan.textContent = new Date().toLocaleTimeString();
-                leftMeta.appendChild(timeSpan);
+            leftMeta.appendChild(authorSpan);
 
-                meta.appendChild(leftMeta);
+            const timeSpan = document.createElement("span");
+            timeSpan.textContent = new Date().toLocaleTimeString();
+            leftMeta.appendChild(timeSpan);
 
-                if (rules.length > 0) {
-                    const ruleSpan = document.createElement("span");
-                    ruleSpan.className = "rules";
-                    ruleSpan.textContent = "[" + rules.join(", ") + "]";
-                    meta.appendChild(ruleSpan);
-                }
+            // Post Link (only for posts)
+            if (rkey && authorDisplay !== "Unknown" && collection === "app.bsky.feed.post" && operation !== "delete") {
+                const postLink = document.createElement("a");
+                postLink.className = "post-link";
+                postLink.href = `https://bsky.app/profile/${authorDisplay}/post/${rkey}`;
+                postLink.target = "_blank";
+                postLink.textContent = "🔗";
+                postLink.title = "View on Bluesky";
+                leftMeta.appendChild(postLink);
+            }
 
-                li.appendChild(meta);
+            meta.appendChild(leftMeta);
 
-                // Content
-                const content = document.createElement("div");
-                content.className = "content";
+            if (rules.length > 0) {
+                const ruleSpan = document.createElement("span");
+                ruleSpan.className = "rules";
+                ruleSpan.textContent = "[" + rules.join(", ") + "]";
+                meta.appendChild(ruleSpan);
+            }
 
-                if (record) {
-                    const type = record["$type"] || "unknown";
+            li.appendChild(meta);
 
-                    if (type === "app.bsky.feed.post" || record.text) {
-                        content.textContent = record.text || "[No Text]";
-                    } else if (type === "app.bsky.feed.like") {
-                        content.innerHTML = `<span class="action">❤️ Liked</span> <a href="${record.subject.uri}" target="_blank" style="color:#888">${record.subject.uri}</a>`;
-                    } else if (type === "app.bsky.feed.repost") {
-                        content.innerHTML = `<span class="action">🔄 Reposted</span> <a href="${record.subject.uri}" target="_blank" style="color:#888">${record.subject.uri}</a>`;
-                    } else if (type === "app.bsky.graph.follow") {
-                        content.innerHTML = `<span class="action">👤 Followed</span> ${record.subject}`;
-                    } else {
-                        // Fallback for other types
-                        content.textContent = `[${type}] ` + JSON.stringify(record, null, 2);
-                        content.style.color = "#888";
-                        content.style.fontSize = "0.8em";
-                    }
+            // Content
+            const content = document.createElement("div");
+            content.className = "content";
+
+            if (operation === "delete") {
+                const collName = collection ? collection.split('.').pop() : "item";
+                content.innerHTML = `<span class="action">🗑️ Deleted ${collName}</span> <span style="color:#888">${rkey}</span>`;
+            } else if (record) {
+                const type = record["$type"] || "unknown";
+
+                if (type === "app.bsky.feed.post" || record.text) {
+                    content.textContent = record.text || "[No Text]";
+                } else if (type === "app.bsky.feed.like") {
+                    const link = getBskyLink(record.subject.uri);
+                    const rkeyText = getRKey(record.subject.uri);
+                    const targetDID = getDID(record.subject.uri);
+
+                    const linkHtml = link ? `<a href="${link}" target="_blank">${rkeyText}</a>` : rkeyText;
+                    const authorHtml = targetDID ? ` by <a href="https://bsky.app/profile/${targetDID}" target="_blank">@${targetDID}</a>` : "";
+
+                    content.innerHTML = `<span class="action">❤️ Liked</span> ${linkHtml}${authorHtml}`;
+                } else if (type === "app.bsky.feed.repost") {
+                    const link = getBskyLink(record.subject.uri);
+                    const rkeyText = getRKey(record.subject.uri);
+                    const targetDID = getDID(record.subject.uri);
+
+                    const linkHtml = link ? `<a href="${link}" target="_blank">${rkeyText}</a>` : rkeyText;
+                    const authorHtml = targetDID ? ` by <a href="https://bsky.app/profile/${targetDID}" target="_blank">@${targetDID}</a>` : "";
+
+                    content.innerHTML = `<span class="action">🔄 Reposted</span> ${linkHtml}${authorHtml}`;
+                } else if (type === "app.bsky.graph.follow") {
+                    content.innerHTML = `<span class="action">👤 Followed</span> <a href="https://bsky.app/profile/${record.subject}" target="_blank">${record.subject}</a>`;
                 } else {
-                    content.textContent = JSON.stringify(event, null, 2);
+                    // Fallback for other types
+                    content.textContent = `[${type}] ` + JSON.stringify(record, null, 2);
                     content.style.color = "#888";
                     content.style.fontSize = "0.8em";
                 }
-                li.appendChild(content);
+            } else {
+                content.textContent = JSON.stringify(event, null, 2);
+                content.style.color = "#888";
+                content.style.fontSize = "0.8em";
+            }
+            li.appendChild(content);
 
-                // Embeds (only for posts usually)
-                if (record && record.embed) {
-                    const embedDiv = document.createElement("div");
-                    embedDiv.className = "embed";
+            // Embeds (only for posts usually)
+            if (record && record.embed) {
+                const embedDiv = document.createElement("div");
+                embedDiv.className = "embed";
 
-                    const type = record.embed["$type"];
-                    const typeHeader = document.createElement("div");
-                    typeHeader.className = "embed-type";
-                    typeHeader.textContent = type ? `[${type.split('.').pop()}]` : "[Embed]";
-                    embedDiv.appendChild(typeHeader);
+                const type = record.embed["$type"];
+                const typeHeader = document.createElement("div");
+                typeHeader.className = "embed-type";
+                typeHeader.textContent = type ? `[${type.split('.').pop()}]` : "[Embed]";
+                embedDiv.appendChild(typeHeader);
 
-                    if (record.embed.external) {
-                        const ext = record.embed.external;
-                        const linkDiv = document.createElement("div");
-                        linkDiv.className = "embed-link";
-                        const a = document.createElement("a");
-                        a.href = ext.uri;
-                        a.target = "_blank";
-                        a.textContent = ext.title || ext.uri;
-                        linkDiv.appendChild(a);
+                if (record.embed.external) {
+                    const ext = record.embed.external;
+                    const linkDiv = document.createElement("div");
+                    linkDiv.className = "embed-link";
+                    const a = document.createElement("a");
+                    a.href = ext.uri;
+                    a.target = "_blank";
+                    a.textContent = ext.title || ext.uri;
+                    linkDiv.appendChild(a);
 
-                        if (ext.description) {
-                            const desc = document.createElement("div");
-                            desc.style.fontSize = "0.8em";
-                            desc.style.color = "#ccc";
-                            desc.textContent = ext.description;
-                            linkDiv.appendChild(desc);
-                        }
-                        embedDiv.appendChild(linkDiv);
+                    if (ext.description) {
+                        const desc = document.createElement("div");
+                        desc.style.fontSize = "0.8em";
+                        desc.style.color = "#ccc";
+                        desc.textContent = ext.description;
+                        linkDiv.appendChild(desc);
                     }
-
-                    if (record.embed.images) {
-                        const imgInfo = document.createElement("div");
-                        imgInfo.textContent = `${record.embed.images.length} image(s)`;
-                        embedDiv.appendChild(imgInfo);
-                    }
-
-                    li.appendChild(embedDiv);
+                    embedDiv.appendChild(linkDiv);
                 }
 
-                list.prepend(li); // Newest at top
+                if (record.embed.record) {
+                    let rec = record.embed.record;
+                    // Handle recordWithMedia wrapper
+                    if (rec.record && rec.record.uri) {
+                        rec = rec.record;
+                    }
 
-            } catch (e) {
-                console.error(e);
-                li.textContent = "Error parsing: " + evt.data;
-                list.prepend(li);
+                    const link = getBskyLink(rec.uri);
+                    const rkeyText = getRKey(rec.uri);
+                    const targetDID = getDID(rec.uri);
+
+                    const linkHtml = link ? `<a href="${link}" target="_blank" style="color:#4af">${rkeyText}</a>` : rkeyText;
+                    const authorHtml = targetDID ? ` by <a href="https://bsky.app/profile/${targetDID}" target="_blank" style="color:#888">@${targetDID}</a>` : "";
+
+                    const recDiv = document.createElement("div");
+                    recDiv.style.padding = "5px";
+                    recDiv.innerHTML = `Quote Post: ${linkHtml}${authorHtml}`;
+                    embedDiv.appendChild(recDiv);
+                }
+
+                if (record.embed.images || (record.embed.media && record.embed.media.images)) {
+                    const images = record.embed.images || record.embed.media.images;
+
+                    if (showImages) {
+                        const imgGrid = document.createElement("div");
+                        imgGrid.className = "image-grid";
+
+                        images.forEach(img => {
+                            if (img.image && img.image.ref && img.image.ref["$link"]) {
+                                const cid = img.image.ref["$link"];
+                                const imgUrl = `${serverConfig.bskyServer}/xrpc/com.atproto.sync.getBlob?did=${authorDID}&cid=${cid}`;
+
+                                const imgEl = document.createElement("img");
+                                imgEl.src = imgUrl;
+                                imgEl.className = "post-image";
+                                imgEl.alt = img.alt || "Post image";
+                                imgGrid.appendChild(imgEl);
+                            }
+                        });
+
+                        embedDiv.appendChild(imgGrid);
+                    } else {
+                        const placeholder = document.createElement("div");
+                        placeholder.className = "image-placeholder";
+                        placeholder.textContent = `[${images.length} image(s) hidden]`;
+                        embedDiv.appendChild(placeholder);
+                    }
+                }
+
+                li.appendChild(embedDiv);
             }
 
-            // Keep list size manageable
-            if (list.children.length > 100) {
-                list.removeChild(list.lastChild);
+            // Raw JSON
+            if (showRaw) {
+                const rawDiv = document.createElement("pre");
+                rawDiv.className = "raw-json";
+                rawDiv.textContent = JSON.stringify(event, null, 2);
+                li.appendChild(rawDiv);
             }
-        };
 
-        ws.onclose = function() {
-            status.textContent = "Disconnected";
-            status.style.color = "#f44";
-        };
+            return li;
+        }
+
+        function connect() {
+            ws = new WebSocket("ws://localhost:8080/ws");
+
+            ws.onopen = function() {
+                isConnected = true;
+                btnConnect.textContent = "Disconnect";
+                btnConnect.classList.remove("connect");
+                btnConnect.classList.add("disconnect");
+                btnConnect.disabled = false;
+            };
+
+            ws.onmessage = function(evt) {
+                try {
+                    const msg = JSON.parse(evt.data);
+
+                    // Add to buffer (Newest first)
+                    eventBuffer.unshift(msg);
+                    if (eventBuffer.length > maxBufferSize) {
+                        eventBuffer.pop();
+                    }
+
+                    // If paused, just buffer, don't render
+                    if (isPaused) return;
+
+                    // If it matches current filters, show it
+                    if (shouldShow(msg)) {
+                        const li = createEventElement(msg);
+                        list.prepend(li);
+
+                        // Keep DOM size manageable
+                        if (list.children.length > maxDisplayLimit) {
+                            list.removeChild(list.lastChild);
+                        }
+                    }
+
+                } catch (e) {
+                    console.error(e);
+                }
+            };
+
+            ws.onclose = function() {
+                isConnected = false;
+                btnConnect.textContent = "Connect";
+                btnConnect.classList.remove("disconnect");
+                btnConnect.classList.add("connect");
+                btnConnect.disabled = false;
+            };
+        }
+
+        // Initial connect
+        connect();
     </script>
 </body>
 </html>

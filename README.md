@@ -14,6 +14,7 @@ Aperture is a high-performance, real-time filter for the Bluesky firehose. It co
     *   **Text Content**: Regex matching on post text.
     *   **Embedded URLs**: Regex matching on external links embedded in posts.
     *   **Authors**: Exact matching on DIDs or Handles (if available).
+    *   **Target Users**: Exact matching on the DID of the user being interacted with (liked, reposted, replied to).
     *   **Embed Types**: Filter by type of content embedded (images, video, external link, quote post).
     *   **Languages**: Filter by post language (e.g., en, ja).
     *   **Reply Status**: Filter by whether the post is a reply or an original post.
@@ -54,6 +55,11 @@ Create a `config.json` file in the root directory.
       "authors": ["did:plc:12345", "alice.bsky.social"]
     },
     {
+      "name": "Interactions with User",
+      "collections": ["app.bsky.feed.like", "app.bsky.feed.repost", "app.bsky.feed.post"],
+      "targetUsers": ["did:plc:12345"]
+    },
+    {
       "name": "Art Feed",
       "collections": ["app.bsky.feed.post"],
       "embedTypes": ["images"]
@@ -83,6 +89,7 @@ A RuleSet matches an event if **ALL** specified criteria in the set are met.
 *   `textRegexes`: List of regex patterns to match against post text. (Only applies to Posts).
 *   `urlRegexes`: List of regex patterns to match against embedded external URLs. (Only applies to Posts).
 *   `authors`: List of exact DIDs (e.g., `did:plc:...`) or Handles (e.g., `user.bsky.social`) to match.
+*   `targetUsers`: List of exact DIDs to match as the target of an interaction (e.g. the user being liked, reposted, or replied to).
 *   `embedTypes`: List of embed types to match. Values: `images`, `video`, `external`, `record` (quote post). (Only applies to Posts).
 *   `langs`: List of language codes to match (e.g., `en`, `ja`). Matches if the post contains ANY of the specified languages. (Only applies to Posts).
 *   `isReply`: Boolean. `true` matches only replies. `false` matches only original posts (and quote posts). If omitted, matches both. (Only applies to Posts).

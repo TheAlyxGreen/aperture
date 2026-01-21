@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/TheAlyxGreen/firefly"
@@ -15,6 +16,7 @@ type CompiledRuleSet struct {
 	TextPatterns []*regexp.Regexp
 	UrlPatterns  []*regexp.Regexp
 	Authors      map[string]bool
+	TargetUsers  map[string]bool
 	EmbedTypes   []string
 	Langs        []string
 	IsReply      *bool
@@ -44,6 +46,7 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 		var collection string
 		var authorDID string
 		var authorHandle string
+		var targetUserDID string
 
 		// Try to get data from RawCommit first
 		if event.RawCommit != nil {
@@ -74,6 +77,35 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 			case firefly.EventTypeRepost:
 				collection = "app.bsky.feed.repost"
 			}
+		}
+
+		// Determine Target User based on event type
+		// Note: We need to extract the DID from the URI (at://did:plc:123/...)
+		extractDID := func(uri string) string {
+			if strings.HasPrefix(uri, "at://") {
+				parts := strings.Split(uri, "/")
+				if len(parts) >= 3 {
+					return parts[2]
+				}
+			}
+			return ""
+		}
+
+		switch event.Type {
+		case firefly.EventTypeLike:
+			if event.LikeEvent != nil {
+				targetUserDID = extractDID(event.LikeEvent.Subject.Uri)
+			}
+		case firefly.EventTypeRepost:
+			if event.RepostEvent != nil {
+				targetUserDID = extractDID(event.RepostEvent.Subject.Uri)
+			}
+		case firefly.EventTypePost:
+			if event.Post != nil && event.Post.ReplyInfo != nil {
+				// For replies, the target is the parent post's author
+				targetUserDID = extractDID(event.Post.ReplyInfo.ReplyTarget.Uri)
+			}
+			// Add Follow support if Firefly exposes it in a friendly way, otherwise we'd need to parse RawCommit record
 		}
 
 		var matchedRules []string
@@ -111,7 +143,14 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 				}
 			}
 
-			// 3. Check Text Patterns (if any)
+			// 3. Check Target User (Exact Match)
+			if len(rule.TargetUsers) > 0 {
+				if targetUserDID == "" || !rule.TargetUsers[targetUserDID] {
+					continue
+				}
+			}
+
+			// 4. Check Text Patterns (if any)
 			if len(rule.TextPatterns) > 0 {
 				if event.Post == nil {
 					continue
@@ -129,7 +168,7 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 				}
 			}
 
-			// 4. Check URL Patterns (if any)
+			// 5. Check URL Patterns (if any)
 			if len(rule.UrlPatterns) > 0 {
 				if event.Post == nil {
 					continue
@@ -150,7 +189,7 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 				}
 			}
 
-			// 5. Check Embed Types (if any)
+			// 6. Check Embed Types (if any)
 			if len(rule.EmbedTypes) > 0 {
 				if event.Post == nil {
 					continue
@@ -182,7 +221,7 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 				}
 			}
 
-			// 6. Check Languages (if any)
+			// 7. Check Languages (if any)
 			if len(rule.Langs) > 0 {
 				if event.Post == nil {
 					continue
@@ -205,7 +244,7 @@ func worker(jobs <-chan *firefly.FirehoseEvent, broadcast chan<- []byte, rules [
 				}
 			}
 
-			// 7. Check IsReply
+			// 8. Check IsReply
 			if rule.IsReply != nil {
 				if event.Post == nil {
 					continue

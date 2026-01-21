@@ -3,8 +3,8 @@ module github.com/TheAlyxGreen/aperture
 go 1.24
 
 require (
-	github.com/TheAlyxGreen/firefly v1.2.3
-	github.com/gorilla/websocket v1.5.1
+	github.com/TheAlyxGreen/firefly v0.0.0-20260109232439-3ddbee39fd96
+	github.com/gorilla/websocket v1.5.3
 )
 
 require (
@@ -55,10 +55,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/crypto v0.22.0 // indirect
-	golang.org/x/net v0.24.0 // indirect
 	golang.org/x/sys v0.22.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	lukechampine.com/blake3 v1.2.1 // indirect
 )
-
-replace github.com/TheAlyxGreen/firefly => C:\Users\Alyx\Documents\Programming\go\src\github.com\TheAlyxGreen\firefly

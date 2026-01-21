@@ -11,9 +11,10 @@ type RuleSet struct {
 	TextRegexes []string `json:"textRegexes"`
 	UrlRegexes  []string `json:"urlRegexes"`
 	Authors     []string `json:"authors"`
+	TargetUsers []string `json:"targetUsers"`
 	EmbedTypes  []string `json:"embedTypes"`
 	Langs       []string `json:"langs"`
-	IsReply     *bool    `json:"isReply,omitempty"` // true: must be reply, false: must not be reply, nil: ignore
+	IsReply     *bool    `json:"isReply,omitempty"`
 }
 
 type Config struct {
@@ -21,6 +22,7 @@ type Config struct {
 	JetstreamServer string    `json:"jetstreamServer"`
 	Rules           []RuleSet `json:"rules"`
 	Port            int       `json:"port"`
+	CursorOffset    int64     `json:"cursorOffset"` // Microseconds to look back
 }
 
 func LoadConfig(path string) (*Config, error) {

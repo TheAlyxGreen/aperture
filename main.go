@@ -22,6 +22,11 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+// PublicConfig exposes safe configuration to the client
+type PublicConfig struct {
+	BskyServer string `json:"bskyServer"`
+}
+
 func main() {
 	// 1. Load Configuration
 	config, err := LoadConfig("config.json")
@@ -29,11 +34,18 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// 2. Compile Rules and Aggregate Collections
+	// 2. Compile Rules and Aggregate Collections/Authors
 	var compiledRules []CompiledRuleSet
 	collectionsMap := make(map[string]bool)
+	authorsMap := make(map[string]bool)
 	var ruleNames []string
-	subscribeToAll := false
+	subscribeToAllCollections := false
+	subscribeToAllAuthors := false
+
+	// If no rules are defined, we default to subscribing to everything (or nothing, but let's assume everything for authors)
+	if len(config.Rules) == 0 {
+		subscribeToAllAuthors = true
+	}
 
 	for i, rule := range config.Rules {
 		var cr CompiledRuleSet
@@ -47,7 +59,7 @@ func main() {
 		cr.Collections = rule.Collections
 		for _, c := range rule.Collections {
 			if c == "*" {
-				subscribeToAll = true
+				subscribeToAllCollections = true
 			}
 			collectionsMap[c] = true
 		}
@@ -75,6 +87,18 @@ func main() {
 			cr.Authors = make(map[string]bool)
 			for _, author := range rule.Authors {
 				cr.Authors[author] = true
+				authorsMap[author] = true
+			}
+		} else {
+			// If a rule has no specific authors, it needs to listen to ALL authors
+			subscribeToAllAuthors = true
+		}
+
+		// Target Users (Exact Match)
+		if len(rule.TargetUsers) > 0 {
+			cr.TargetUsers = make(map[string]bool)
+			for _, target := range rule.TargetUsers {
+				cr.TargetUsers[target] = true
 			}
 		}
 
@@ -87,8 +111,9 @@ func main() {
 	}
 	log.Printf("Loaded %d rule sets", len(compiledRules))
 
+	// Determine Collections to subscribe to
 	var collections []string
-	if !subscribeToAll {
+	if !subscribeToAllCollections {
 		for c := range collectionsMap {
 			collections = append(collections, c)
 		}
@@ -100,6 +125,26 @@ func main() {
 	} else {
 		log.Printf("Subscribing to ALL collections (*)")
 		collections = nil // Firefly/Jetstream convention for "all"
+	}
+
+	// Determine Authors to subscribe to
+	var authors []string
+	if !subscribeToAllAuthors {
+		for a := range authorsMap {
+			authors = append(authors, a)
+		}
+		log.Printf("Subscribing to %d specific authors", len(authors))
+	} else {
+		log.Printf("Subscribing to ALL authors")
+		authors = nil
+	}
+
+	// Determine Cursor
+	var cursor *int64
+	if config.CursorOffset > 0 {
+		c := time.Now().UnixMicro() - config.CursorOffset
+		cursor = &c
+		log.Printf("Starting replay from %d microseconds ago (Cursor: %d)", config.CursorOffset, *cursor)
 	}
 
 	// 3. Start the Hub
@@ -137,6 +182,8 @@ func main() {
 
 		events, err := client.StreamEvents(ctx, &firefly.FirehoseOptions{
 			Collections: collections,
+			Authors:     authors,
+			Cursor:      cursor,
 			BufferSize:  1000,
 			URL:         jetstreamURL,
 		})
@@ -176,6 +223,13 @@ func main() {
 		json.NewEncoder(w).Encode(ruleNames)
 	})
 
+	http.HandleFunc("/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(PublicConfig{
+			BskyServer: config.BskyServer,
+		})
+	})
+
 	addr := fmt.Sprintf(":%d", config.Port)
 	log.Printf("Server starting on %s", addr)
 	err = http.ListenAndServe(addr, nil)
@@ -191,4 +245,22 @@ func serveWs(hub *Hub, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hub.register <- conn
+
+	// Start a read loop to handle control messages (Close, Ping, etc.)
+	// This ensures the connection is properly maintained and closed.
+	go func() {
+		defer func() {
+			hub.unregister <- conn
+			conn.Close()
+		}()
+		for {
+			_, _, err := conn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNoStatusReceived) {
+					log.Printf("websocket error: %v", err)
+				}
+				break
+			}
+		}
+	}()
 }

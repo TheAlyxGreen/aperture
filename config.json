@@ -1,6 +1,7 @@
 {
   "bskyServer": "https://bsky.social",
   "jetstreamServer": "",
+  "cursorOffset": 60000000,
   "rules": [
     {
       "name": "DotCom Sites",
@@ -22,6 +23,11 @@
       "collections": ["app.bsky.feed.post"],
       "embedTypes": ["images"],
       "isReply": false
+    },
+    {
+      "name": "Quote Posts",
+      "collections": ["app.bsky.feed.post"],
+      "embedTypes": ["record"]
     },
     {
       "name": "Everything",
